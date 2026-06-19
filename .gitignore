@@ -6,8 +6,5 @@ __pycache__/
 .venv/
 venv/
 
-# build artifacts
-forecast.png
-
 # macOS
 .DS_Store
