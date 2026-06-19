@@ -20,14 +20,35 @@ continuation.*
 
 ---
 
+## Key results
+
+Eight models benchmarked on the same held-out test set (lower RMSE is better).
+The recurrent models win; the original CNN is competitive but heavy on
+parameters. Full analysis in [the model study below](#model-study-how-does-the-cnn-stack-up).
+
+| Model            | Test RMSE | Params  |
+|------------------|----------:|--------:|
+| **GRU** (best)   |  **4.08** |  21,265 |
+| LSTM             |      4.54 |  25,297 |
+| MLP              |      4.71 |  40,301 |
+| CNN              |      4.72 | 482,193 |
+| Seasonal-naive   |      4.89 |       0 |
+| TCN              |      5.37 |  15,217 |
+| Linear (ridge)   |      6.24 |       0 |
+| Persistence      |      8.55 |       0 |
+
+---
+
 ## Table of contents
 
+- [Key results](#key-results)
 - [Learning goals](#learning-goals)
 - [The problem](#the-problem)
 - [The data](#the-data-synthetic-by-design)
 - [Model architecture](#model-architecture)
 - [Results & interpretation](#results--interpretation)
 - [Model study: how does the CNN stack up?](#model-study-how-does-the-cnn-stack-up)
+- [Learning curves](#learning-curves)
 - [Quantifying uncertainty](#quantifying-uncertainty)
 - [Running it](#running-it)
 - [Project structure](#project-structure)
@@ -201,6 +222,23 @@ Plotting RMSE *per forecast step* is more informative than a single number:
   spikes at the half-cycles. That sawtooth is a vivid illustration of *why* a
   naive baseline fails on periodic data.
 
+## Learning curves
+
+Train vs. validation loss per neural model (log scale) — the clearest way to
+see *how* each model fit, not just how well.
+
+![Training vs. validation loss per model](results/learning_curves.png)
+
+- **CNN, LSTM and GRU show a train-below-validation gap** — mild overfitting,
+  which is exactly what the Dropout layers and early stopping (restoring the
+  best validation weights) are there to contain. The GRU reaches the lowest
+  validation loss and trains the longest before stopping.
+- **The TCN is different: its train and validation curves track each other but
+  plateau high.** That's *underfitting*, not overfitting — so its last-place
+  finish is an architecture/capacity problem, not a generalisation one. It's the
+  concrete evidence behind the "needs tuning" caveat above, and a reminder that
+  two models can fail for opposite reasons.
+
 ## Quantifying uncertainty
 
 A point forecast hides how confident the model is — and with irreducible noise
@@ -236,8 +274,8 @@ uv run run_study.py  # full study: train all models, write results/ table + plot
 ```
 
 `main.py` saves `forecast.png` (input window + actual vs. predicted
-continuation). `run_study.py` writes `results/metrics.csv` and the three plots
-shown above. For a fast end-to-end check of the study, `STUDY_QUICK=1 uv run
+continuation). `run_study.py` writes `results/metrics.csv` and the four plots
+shown above (model comparison, per-horizon error, learning curves, uncertainty). For a fast end-to-end check of the study, `STUDY_QUICK=1 uv run
 run_study.py` runs it on a tiny dataset for a few epochs.
 
 Tested with Python 3.13, TensorFlow 2.21, and NumPy 2.4. Dependency versions are

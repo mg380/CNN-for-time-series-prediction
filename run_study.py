@@ -59,6 +59,7 @@ def main():
     rows = []                       # one metrics dict per model
     horizon_curves = {}             # name -> per-horizon RMSE
     keras_models = {}               # name -> trained model (for uncertainty plot)
+    histories = {}                  # name -> Keras training history (for learning curves)
 
     # ---- baselines ---------------------------------------------------------
     for base in (M.Persistence(), M.SeasonalNaive(SEASON), M.LinearRidge()):
@@ -85,6 +86,7 @@ def main():
                          picp=Mt.picp(Yte, lo, hi), mpiw=Mt.mpiw(lo, hi)))
         horizon_curves[name] = Mt.per_horizon_rmse(Yte, pred)
         keras_models[name] = model
+        histories[name] = hist.history
         print(f"[neural]   {name:14s} rmse={rows[-1]['rmse']:.3f} "
               f"picp={rows[-1]['picp']:.2f} epochs={len(hist.history['loss'])}")
 
@@ -93,6 +95,7 @@ def main():
     _print_table(rows)
     _plot_comparison(rows)
     _plot_horizon_curves(horizon_curves, rows)
+    _plot_learning_curves(histories)
     _plot_uncertainty(keras_models, rows, Xte, Yte, horizon)
     print(f"\nWrote results and plots to {RESULTS_DIR}/")
 
@@ -153,6 +156,29 @@ def _plot_horizon_curves(curves, rows):
     plt.tight_layout()
     plt.savefig(os.path.join(RESULTS_DIR, "horizon_error.png"), dpi=120)
     plt.close()
+
+
+def _plot_learning_curves(histories):
+    n = len(histories)
+    cols = 3
+    rows = (n + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 3 * rows),
+                             squeeze=False)
+    flat = axes.flatten()
+    for ax, (name, h) in zip(flat, histories.items()):
+        ax.plot(h["loss"], label="train", linewidth=1.3)
+        ax.plot(h["val_loss"], label="validation", linewidth=1.3)
+        ax.set_title(name)
+        ax.set_xlabel("epoch")
+        ax.set_ylabel("MSE loss")
+        ax.set_yscale("log")
+        ax.legend(fontsize=8)
+    for ax in flat[n:]:                 # hide unused axes
+        ax.set_visible(False)
+    fig.suptitle("Training vs. validation loss (log scale)")
+    fig.tight_layout()
+    fig.savefig(os.path.join(RESULTS_DIR, "learning_curves.png"), dpi=120)
+    plt.close(fig)
 
 
 def _plot_uncertainty(keras_models, rows, Xte, Yte, horizon):
