@@ -10,8 +10,7 @@ treat them uniformly:
 import numpy as np
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import (Input, Dense, Flatten, Dropout, Conv1D,
-                                      MaxPooling1D, LSTM, GRU,
-                                      GlobalAveragePooling1D)
+                                      MaxPooling1D, LSTM, GRU, Add, Lambda)
 from tensorflow.keras.callbacks import EarlyStopping
 
 
@@ -109,18 +108,36 @@ def build_gru(window, horizon, dropout=0.2):
     ], name="gru")
 
 
-def build_tcn(window, horizon, dropout=0.2):
-    """Temporal Convolutional Network: stacked dilated *causal* convolutions.
+def build_tcn(window, horizon, dropout=0.2, filters=64,
+              dilations=(1, 2, 4, 8, 16, 32, 64), kernel=2):
+    """Temporal Convolutional Network: stacked *residual* dilated causal convs.
 
-    Dilations grow the receptive field exponentially without pooling, so the
-    last timestep sees far into the past.
+    Tuned configuration (see ``tune_tcn.py``). Two fixes turned this from the
+    worst neural model into a close second:
+
+    * **Receptive field.** Dilations grow it exponentially to ~255 steps -- several
+      full cycles. The original reached only ~32 steps, less than one cycle
+      (season=40), so it could not see a whole oscillation.
+    * **Last-timestep readout.** The forecast is read from the final causal
+      timestep, which has seen the entire history. The original global-average-
+      pooled, which averages away the phase information the model needs.
+
+    Residual connections keep the deep stack trainable.
     """
     inp = Input(shape=(window, 1))
     x = inp
-    for dilation in (1, 2, 4, 8, 16):
-        x = Conv1D(32, 2, padding="causal", dilation_rate=dilation,
+    for dilation in dilations:
+        prev = x
+        h = Conv1D(filters, kernel, padding="causal", dilation_rate=dilation,
                    activation="relu")(x)
-    x = GlobalAveragePooling1D()(x)
+        h = Dropout(dropout)(h)
+        h = Conv1D(filters, kernel, padding="causal", dilation_rate=dilation,
+                   activation="relu")(h)
+        h = Dropout(dropout)(h)
+        if prev.shape[-1] != filters:            # match channels for the residual
+            prev = Conv1D(filters, 1, padding="same")(prev)
+        x = Add()([prev, h])
+    x = Lambda(lambda t: t[:, -1, :])(x)         # last timestep -> full receptive field
     x = Dense(50, activation="relu")(x)
     x = Dropout(dropout)(x)
     out = Dense(horizon)(x)

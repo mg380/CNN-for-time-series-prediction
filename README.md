@@ -23,17 +23,18 @@ continuation.*
 ## Key results
 
 Eight models benchmarked on the same held-out test set (lower RMSE is better).
-The recurrent models win; the original CNN is competitive but heavy on
+The **GRU wins**; a **tuned TCN** comes a close second (see
+[Tuning the TCN](#tuning-the-tcn)); the original CNN is competitive but heavy on
 parameters. Full analysis in [the model study below](#model-study-how-does-the-cnn-stack-up).
 
 | Model            | Test RMSE | Params  |
 |------------------|----------:|--------:|
 | **GRU** (best)   |  **4.08** |  21,265 |
+| TCN (tuned)      |      4.23 | 116,049 |
 | LSTM             |      4.54 |  25,297 |
 | MLP              |      4.71 |  40,301 |
 | CNN              |      4.72 | 482,193 |
 | Seasonal-naive   |      4.89 |       0 |
-| TCN              |      5.37 |  15,217 |
 | Linear (ridge)   |      6.24 |       0 |
 | Persistence      |      8.55 |       0 |
 
@@ -48,6 +49,7 @@ parameters. Full analysis in [the model study below](#model-study-how-does-the-c
 - [Model architecture](#model-architecture)
 - [Results & interpretation](#results--interpretation)
 - [Model study: how does the CNN stack up?](#model-study-how-does-the-cnn-stack-up)
+- [Tuning the TCN](#tuning-the-tcn)
 - [Learning curves](#learning-curves)
 - [Quantifying uncertainty](#quantifying-uncertainty)
 - [Running it](#running-it)
@@ -181,14 +183,17 @@ calibration metrics described below.
 
 ### Results
 
+The TCN row below is the **tuned** architecture (the story of how it got there
+is in [Tuning the TCN](#tuning-the-tcn)); its untuned version finished last.
+
 | model           |  RMSE |   MAE | sMAPE% |  PICP |  MPIW |   params |
 |-----------------|------:|------:|-------:|------:|------:|---------:|
 | **gru**         | **4.08** | **3.16** | **58.5** | 0.42 |  4.29 |   21,265 |
+| tcn (tuned)     | 4.23  | 3.25  |  58.8  | 0.69  |  9.23 |  116,049 |
 | lstm            | 4.54  | 3.51  |  61.0  | 0.48  |  5.26 |   25,297 |
 | mlp             | 4.71  | 3.67  |  63.9  | 0.68  | 10.47 |   40,301 |
 | cnn             | 4.72  | 3.67  |  62.1  | 0.67  |  9.98 |  482,193 |
 | seasonal_naive  | 4.89  | 3.86  |  66.4  |  —    |  —    |        0 |
-| tcn             | 5.37  | 4.32  |  69.2  | 0.46  |  6.95 |   15,217 |
 | linear          | 6.24  | 4.59  |  69.6  |  —    |  —    |        0 |
 | persistence     | 8.55  | 6.92  |  86.9  |  —    |  —    |        0 |
 
@@ -196,18 +201,18 @@ calibration metrics described below.
 
 **What it shows**
 
-- **Recurrent models win.** The **GRU** is best, with the LSTM second — their
-  sequential state is well-suited to extrapolating the periodic dynamics over a
-  long horizon.
-- **The CNN is solid but mid-pack.** It comfortably beats the seasonal-naive,
-  linear, and persistence baselines, but the RNNs edge it out — *and it does so
-  with ~20× more parameters than the GRU* (482k vs 21k), almost all in its dense
-  head. A good lesson in parameter efficiency.
-- **Baselines matter.** Seasonal-naive — a one-line heuristic — beats both the
-  TCN and the linear model here. If your "real" model can't beat a trivial
-  baseline, that's a finding, not a footnote. (The TCN likely needs tuning;
-  global-average-pooling its features may be discarding useful phase
-  information.)
+- **The GRU wins, but the margin is slim.** A tuned convolutional model (TCN)
+  lands a close second and beats the LSTM — so on this problem recurrence has
+  only a narrow edge over convolution once the conv model is set up properly.
+- **The CNN is solid but parameter-hungry.** It beats every baseline, but the
+  GRU matches its accuracy with *~20× fewer parameters* (21k vs 482k, almost all
+  in the CNN's dense head). A good lesson in parameter efficiency — and in why
+  the TCN's *fully convolutional* design is so much leaner than the flatten-then-
+  dense CNN.
+- **Baselines matter.** Seasonal-naive — a one-line heuristic — still beats the
+  linear model and persistence outright, and is within striking distance of the
+  learned nets. If your "real" model can't clear a trivial baseline, that's a
+  finding, not a footnote.
 
 ### Error growth over the horizon
 
@@ -222,6 +227,45 @@ Plotting RMSE *per forecast step* is more informative than a single number:
   spikes at the half-cycles. That sawtooth is a vivid illustration of *why* a
   naive baseline fails on periodic data.
 
+## Tuning the TCN
+
+In the first pass the TCN finished **last** (RMSE 5.37). Its learning curve
+showed *underfitting* — train and validation loss plateaued together, high — so
+this was a capacity/architecture problem, not overfitting. Two hypotheses, both
+testable (`tune_tcn.py` runs the search on the identical split):
+
+1. **Receptive field too small.** The original dilations (1→16, kernel 2) reach
+   only ~32 steps — *less than one full cycle* (season = 40), so the model
+   literally could not see a whole oscillation.
+2. **Lossy readout.** Global-average-pooling the feature map collapses the time
+   axis, discarding the *phase* information a forecaster needs.
+
+The fix: grow the dilations to `1→64` (receptive field ~255 steps, several
+cycles), read the forecast from the **last causal timestep** instead of pooling,
+and add residual connections to keep the deeper stack trainable.
+
+| TCN variant                          |  RMSE | vs. original |
+|--------------------------------------|------:|-------------:|
+| original (GAP, receptive field ~32)  | 5.37  |  —           |
+| + larger receptive field, still GAP  | 4.75  |  −0.62       |
+| + last-timestep readout (the fix)    | 4.26  |  −1.11       |
+| + dropout 0.2 (**adopted**)          | **4.19** | **−1.18** |
+
+*(RMSEs from `tune_tcn.py`. The adopted architecture scores 4.23 in the full
+study — see the results table — a tiny shift from the different model-build order
+under the shared seed.)*
+
+The **ablation isolates each cause**: enlarging the receptive field alone gained
+0.62 RMSE; swapping global-pooling for the last-timestep readout gained another
+~0.5. Either way the tuned TCN leaps from last to **second place** — it now
+beats the LSTM, MLP and CNN, and sits within a whisker of the GRU.
+
+**Did it beat the RNNs?** It beats the LSTM, but not the GRU — recurrence keeps a
+narrow lead here. The real lesson is that the original TCN's poor showing was an
+*implementation* failure, not evidence that convolutions are worse: with a
+sensible receptive field and readout, a fully-convolutional model is competitive
+with recurrent ones at a fraction of a flatten-and-dense CNN's parameters.
+
 ## Learning curves
 
 Train vs. validation loss per neural model (log scale) — the clearest way to
@@ -233,11 +277,10 @@ see *how* each model fit, not just how well.
   which is exactly what the Dropout layers and early stopping (restoring the
   best validation weights) are there to contain. The GRU reaches the lowest
   validation loss and trains the longest before stopping.
-- **The TCN is different: its train and validation curves track each other but
-  plateau high.** That's *underfitting*, not overfitting — so its last-place
-  finish is an architecture/capacity problem, not a generalisation one. It's the
-  concrete evidence behind the "needs tuning" caveat above, and a reminder that
-  two models can fail for opposite reasons.
+- **The tuned TCN now fits cleanly**: train and validation track each other down
+  to a *low* plateau (≈25), versus the ≈35 plateau of the untuned version that
+  signalled underfitting. The curves above are for the tuned model — the
+  before/after is documented in [Tuning the TCN](#tuning-the-tcn).
 
 ## Quantifying uncertainty
 
@@ -256,12 +299,13 @@ future**. I also report two calibration metrics in the table:
 - **MPIW** (width) — average interval width (sharpness).
 
 **Honest finding:** the intervals are **under-calibrated** — coverage lands at
-0.42–0.68, well short of the nominal 0.95. Vanilla MC-Dropout is *overconfident*
+0.42–0.69, well short of the nominal 0.95. Vanilla MC-Dropout is *overconfident*
 here. It captures the *relative* shape of uncertainty (growing with horizon)
 but would need post-hoc calibration — or a method like deep ensembles or
 quantile regression — to hit nominal coverage. Notably the wider-interval models
-(MLP, CNN) cover more truths than the sharp-but-overconfident GRU, the classic
-sharpness-vs-calibration trade-off.
+(TCN, MLP, CNN, all with MPIW ≈ 9–10) cover more truths than the sharp-but-
+overconfident GRU (MPIW 4.3, coverage 0.42) — the classic sharpness-vs-calibration
+trade-off.
 
 ## Running it
 
@@ -287,6 +331,7 @@ pinned in `uv.lock` for reproducibility.
 .
 ├── main.py                 # quick demo: train the CNN and plot one forecast
 ├── run_study.py            # full model-comparison study -> results/
+├── tune_tcn.py             # TCN architecture search (receptive field / readout)
 ├── src/
 │   ├── random_walker.py    # generates one sinusoid + random-walk series
 │   ├── data.py             # windowed dataset + train/val/test splits
@@ -312,7 +357,12 @@ pinned in `uv.lock` for reproducibility.
 - **Train/test distributions must match** — the amplitude bug was a concrete,
   memorable example of how a tiny mismatch corrupts evaluation.
 - **Always benchmark against dumb baselines.** Seeing seasonal-naive beat the
-  TCN was a humbling, useful check on what "good" actually means here.
+  *untuned* TCN was the signal that something was wrong with my model, not that
+  convolutions were hopeless — it sent me looking, and the learning curve +
+  ablation pinned the cause to receptive field and readout.
+- **Diagnose before you tune.** The learning curve said "underfitting", which
+  pointed at capacity/architecture rather than regularisation; the ablation then
+  isolated exactly which two changes mattered. Far better than blind grid search.
 - **A point forecast isn't the whole story.** Adding uncertainty — and finding
   it *miscalibrated* — taught me more than the accuracy numbers did.
 
@@ -324,11 +374,8 @@ estimates were added as part of that progression. Natural next steps:
 
 - **Calibrate the uncertainty** — temperature/variance scaling, deep ensembles,
   or quantile regression to bring PICP up to its nominal coverage.
-- **Tune the weaker models** — the TCN underperforms; a proper hyperparameter
-  search (depth, dilations, pooling vs. last-step readout) is warranted before
-  concluding convolutions lose to recurrence.
-- **Plot learning curves** — training vs. validation loss per model to make the
-  fitting story explicit.
+- **Give every model the same tuning budget** — only the TCN got a search; the
+  GRU's narrow lead might widen or vanish if the others were tuned as carefully.
 - **Try real data** — apply the same sliding-window framing to an actual time
   series (weather, finance, sensor data) where the signal/noise split is
   unknown.
