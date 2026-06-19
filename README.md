@@ -121,6 +121,21 @@ This was the most valuable takeaway of the whole exercise: a flat loss isn't
 always a failure to learn — sometimes it's the model correctly hitting the
 **irreducible error floor** of the problem.
 
+### A note on the forecast boundary
+
+While investigating the plot I noticed what looked like a jump in the series
+right where the forecast begins. Checking the raw numbers showed the *actual*
+data is perfectly continuous there — the step across the boundary is ordinary,
+and the split at step 900 is just where the series is sliced into (input,
+target). The apparent jump was in the *predicted* line: the model emits all 101
+future values **jointly**, with no constraint that its first prediction continue
+smoothly from the last observed value, so the prediction started slightly offset
+from the input. The plot now **anchors the forecast line to the last observed
+point** so it reads honestly as a continuation. This is an inherent property of
+direct multi-step forecasting (an autoregressive model would instead start
+exactly from the last known value) — and a good reminder to verify a surprising
+visual against the underlying data before trusting it.
+
 ## Running it
 
 This project uses [uv](https://docs.astral.sh/uv/) for environment management.

@@ -61,13 +61,21 @@ history = x_test_data[0].flatten()
 true_future = array(y_test_data[0]).flatten()
 pred_future = array(yhat[0]).flatten()
 
+# the actual series is one continuous random walk, so plot it whole
 actual_series = np.concatenate([history, true_future])
-predicted_series = np.concatenate([history, pred_future])
+split = len(history)  # x-index where the forecast begins
+
+# Anchor the forecast to the last observed value so it reads as a continuation.
+# The model predicts all future steps jointly with no constraint to start from
+# history[-1]; without this anchor the predicted line appears to "jump" at the
+# boundary even though the underlying data is continuous there.
+forecast_x = np.arange(split - 1, split + len(pred_future))
+forecast_y = np.concatenate([[history[-1]], pred_future])
 
 plt.figure(figsize=(12, 5))
 plt.plot(actual_series, label='actual', linewidth=1)
-plt.plot(predicted_series, label='predicted', linewidth=1)
-plt.axvline(len(history), color='grey', linestyle='--', label='forecast start')
+plt.plot(forecast_x, forecast_y, label='predicted', linewidth=1)
+plt.axvline(split, color='grey', linestyle='--', label='forecast start')
 plt.title('CNN time-series forecast: last %d steps' % n_output)
 plt.xlabel('time step')
 plt.ylabel('value')
