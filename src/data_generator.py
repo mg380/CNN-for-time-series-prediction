@@ -25,6 +25,9 @@ class Data(rw.RandomWalk):
          self.y_dataset = []
 
     def generate_datasets(self,n_datasets,seed=None):
+        # reset so repeated calls on the same instance don't accumulate
+        self.x_dataset = []
+        self.y_dataset = []
         for i in range(0,n_datasets):
             if not seed:
                 rdm_walk = rw.RandomWalk(i,

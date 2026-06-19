@@ -33,7 +33,7 @@ class RandomWalk():
 
     def next_step(self,origin):
         # if true then positive direction else negative
-        if rdm.random_integers(0,1):
+        if rdm.randint(0, 2):
             direction=1
         else:
             direction=-1

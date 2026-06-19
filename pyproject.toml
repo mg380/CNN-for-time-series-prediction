@@ -1,0 +1,14 @@
+[project]
+name = "cnn-for-time-series-prediction"
+version = "0.1.0"
+description = "Learning project: a 1D CNN that forecasts a sinusoid-plus-random-walk time series"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "matplotlib>=3.8",
+    "numpy>=2.0",
+    "tensorflow>=2.18",
+]
+
+[tool.uv]
+package = false
